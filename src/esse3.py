@@ -1,123 +1,177 @@
 import json
 import os
 import time
+from datetime import datetime, timedelta
+import urllib.parse
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-from bs4 import BeautifulSoup
-from .browser import BrowserConfig
+from selenium.common.exceptions import ElementClickInterceptedException
+from src.browser import BrowserConfig
 
-class Esse3Scraper:
+class GCalendarManager:
     def __init__(self):
-        self.CREDENTIALS_FILE = 'account.json'
-        self.EXAMS_FILE = 'esami_da_fare.json'
-        self.LOGIN_URL = 'https://esse3.uniba.it/auth/Logon.do'
         self.driver = None
+        self.root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    def _handle_career_selection(self):
+    def _safe_click(self, element):
+        """Try a normal click; if intercepted, scroll into view and JS-click instead."""
         try:
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, 'gu_table_sceltacarriera'))
+            element.click()
+        except ElementClickInterceptedException:
+            # Scroll into view then perform JS click
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+            self.driver.execute_script("arguments[0].click();", element)
+        time.sleep(0.3)
+
+    def crea_evento(self, titolo, data, reminders):
+        """Crea un evento su Google Calendar con gestione avanzata dei promemoria."""
+        try:
+            start_time = data
+            end_time = start_time + timedelta(hours=1)
+
+            base_url = "https://calendar.google.com/calendar/render?action=TEMPLATE"
+            params = {
+                'text': titolo,
+                'dates': f"{start_time.strftime('%Y%m%dT%H%M%S')}/{end_time.strftime('%Y%m%dT%H%M%S')}"
+            }
+            self.driver.get(f"{base_url}&{urllib.parse.urlencode(params)}")
+
+            # Attendi caricamento pagina
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[role='main']"))
             )
-            time.sleep(1.5)
 
-            rows = self.driver.find_elements(By.CSS_SELECTOR, '#gu_table_sceltacarriera tbody tr')
-            if len(rows) == 1:
-                rows[0].find_element(By.CSS_SELECTOR, 'a.toolbar-button-blu').click()
-                return
+            # Rimuovi notifiche predefinite
+            while True:
+                try:
+                    btn_remove = WebDriverWait(self.driver, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Rimuovi notifica']"))
+                    )
+                    self._safe_click(btn_remove)
+                except Exception:
+                    break
 
-            print("\n--- Carriere disponibili ---")
-            for i, row in enumerate(rows, start=1):
-                cells = row.find_elements(By.TAG_NAME, 'td')
-                career_type = cells[1].text
-                course = cells[2].text
-                status = cells[3].text
-                print(f"{i}. {course} ({career_type}) - Stato: {status}")
+            # Aggiungi nuovi promemoria
+            for giorni in reminders:
+                self._aggiungi_promemoria(giorni)
 
-            choice = int(input("Seleziona il numero della carriera: ")) - 1
-            while choice < 0 or choice >= len(rows):
-                choice = int(input("Scelta non valida. Riprova: ")) - 1
+            # Imposta colore evento
+            self._imposta_colore()
 
-            rows[choice].find_element(By.CSS_SELECTOR, 'a.toolbar-button-blu').click()
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, 'hamburger'))
+            # Salva evento
+            btn_save = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//span[text()='Salva']"))
             )
-        except TimeoutException:
-            pass
+            self._safe_click(btn_save)
+            time.sleep(2)
 
-    def _load_credentials(self):
-        if os.path.exists(self.CREDENTIALS_FILE):
-            with open(self.CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data['username'], data['password']
+        except Exception as e:
+            print(f"Errore durante la creazione dell'evento '{titolo}': {str(e)}")
 
-    def _save_pending_exams(self, pending):
-        exams_dict = {}
-        if os.path.exists(self.EXAMS_FILE):
-            try:
-                with open(self.EXAMS_FILE, 'r', encoding='utf-8') as f:
-                    exams_dict = json.load(f)
-            except json.JSONDecodeError:
-                exams_dict = {}
-        for exam in pending:
-            exams_dict[exam['code']] = exam
-        with open(self.EXAMS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(exams_dict, f, ensure_ascii=False, indent=2)
-        print(f"Salvati {len(pending)} esami da fare nel file '{self.EXAMS_FILE}'")
+    def _aggiungi_promemoria(self, giorni):
+        """Funzione helper per aggiungere un singolo promemoria"""
+        try:
+            # Conta notifiche esistenti
+            notifiche_pre = self.driver.find_elements(By.XPATH, "//ul[contains(@class, 'COCaHe')]/li")
+            n_pre = len(notifiche_pre)
 
-    def _extract_exams(self):
-        # Navigate to the exam list
-        wait = WebDriverWait(self.driver, 15)
-        wait.until(EC.element_to_be_clickable((By.ID, 'hamburger'))).click()
-        wait.until(EC.element_to_be_clickable((By.ID, 'menu_link-navbox_studenti_Carriera'))).click()
-        wait.until(EC.element_to_be_clickable((By.ID, 'menu_link-navbox_studenti_auth/studente/Libretto/LibrettoHome'))).click()
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'tbody.table-1-body tr')))
+            # Clicca "Aggiungi notifica"
+            btn_add = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Aggiungi notifica']"))
+            )
+            self._safe_click(btn_add)
 
-        # Parse the current page HTML to avoid stale element references
-        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-        rows = soup.select('tbody.table-1-body tr')
+            # Attendi nuovo elemento
+            WebDriverWait(self.driver, 10).until(
+                lambda d: len(d.find_elements(By.XPATH, "//ul[contains(@class, 'COCaHe')]/li")) == n_pre + 1
+            )
+            time.sleep(0.5)
 
-        pending_exams = []
-        for tr in rows:
-            tds = tr.find_all('td')
-            # Determine status from the img title/alt
-            status = ''
-            img = tds[3].find('img') if len(tds) > 3 else None
-            if img:
-                status = img.get('title') or img.get('alt') or ''
-            if 'Superata' in status:
-                continue
+            # Prendi l'ultimo promemoria
+            last_li = self.driver.find_elements(By.XPATH, "//ul[contains(@class, 'COCaHe')]/li")[-1]
 
-            # Extract code and name
-            code_name = tds[0].get_text(strip=True)
-            code, name = (code_name.split(' - ', 1) if ' - ' in code_name else (code_name, ''))
-            pending_exams.append({
-                'code': code,
-                'name': name,
-                'grade': '',
-                'date': ''
-            })
-        return pending_exams
+            # Seleziona tipo notifica (Email)
+            combobox = last_li.find_element(By.XPATH, ".//div[@role='combobox' and @aria-label='Metodo di notifica']")
+            self._safe_click(combobox)
+            option_email = WebDriverWait(last_li, 5).until(
+                EC.visibility_of_element_located((By.XPATH, ".//li[@role='option']//span[contains(., 'Email')]"))
+            )
+            self._safe_click(option_email)
+
+            # Inserisci giorni
+            input_field = last_li.find_element(By.XPATH, ".//input[@type='number']")
+            input_field.clear()
+            input_field.send_keys(str(giorni))
+
+            # Seleziona unità di tempo
+            dropdown = last_li.find_element(By.XPATH, ".//div[@role='combobox' and @aria-label='Selezione unità di tempo']")
+            self._safe_click(dropdown)
+            option_days = WebDriverWait(last_li, 5).until(
+                EC.visibility_of_element_located((By.XPATH, ".//li[@role='option' and @data-value='86400']"))
+            )
+            self._safe_click(option_days)
+
+        except Exception as e:
+            print(f"Errore nell'aggiunta del promemoria a {giorni} giorni: {str(e)}")
+
+    def _imposta_colore(self):
+        """Imposta il colore dell'evento su giallo"""
+        try:
+            # Apri selettore colore
+            btn_color = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Colore calendario')]") )
+            )
+            self._safe_click(btn_color)
+
+            # Seleziona colore giallo
+            color_yellow = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-color='#F6BF26']"))
+            )
+            self._safe_click(color_yellow)
+            time.sleep(0.5)
+
+        except Exception as e:
+            print(f"Errore nell'impostazione del colore: {str(e)}")
 
     def run(self):
-        username, password = self._load_credentials()
-        self.driver = BrowserConfig.initialize_browser(headless=True)
+        """Esegue il processo completo di creazione eventi"""
         try:
-            self.driver.get(self.LOGIN_URL)
-            wait = WebDriverWait(self.driver, 15)
-            wait.until(EC.element_to_be_clickable((By.ID, 'username'))).send_keys(username)
-            self.driver.find_element(By.ID, 'password').send_keys(password)
-            self.driver.find_element(By.NAME, '_eventId_proceed').click()
+            # Carica esami selezionati
+            path = os.path.join(self.root_dir, 'esami_selezionati.json')
+            with open(path, 'r', encoding='utf-8') as f:
+                esami = json.load(f)
+        except FileNotFoundError:
+            print("Errore: File esami_selezionati.json non trovato. Eseguire prima la selezione degli esami.")
+            return
 
-            # Career selection
-            self._handle_career_selection()
+        eventi = []
+        for esame in esami:
+            materia = esame["Attività Didattica"].split("] ")[-1].strip()
+            data_ora = esame["Date e ora del turno"].split(" - ")
+            data_appello = datetime.strptime(f"{data_ora[0].strip()} {data_ora[1].strip()}", "%d/%m/%Y %H:%M")
+            scadenza = esame["Periodo iscrizioni (Dal - Al)"].split("- ")[-1].strip()
+            data_iscrizione = datetime.strptime(scadenza, "%d/%m/%Y").replace(hour=12, minute=0)
 
-            pending_exams = self._extract_exams()
-            if pending_exams:
-                self._save_pending_exams(pending_exams)
-            else:
-                print('Nessun esame da fare trovato.')
+            eventi.extend([
+                {'titolo': materia, 'data': data_appello, 'reminders': [7, 14]},
+                {'titolo': f"Iscr. {materia}", 'data': data_iscrizione, 'reminders': [1]}
+            ])
+
+        # Inizializza browser
+        self.driver = BrowserConfig.initialize_browser(headless=False)
+        try:
+            self.driver.get("https://calendar.google.com")
+            input("Effettua il login manuale su Google Calendar e premi INVIO per continuare...")
+            for evento in eventi:
+                print(f"Creazione evento: {evento['titolo']} - {evento['data']}")
+                self.crea_evento(evento['titolo'], evento['data'], evento['reminders'])
+                time.sleep(2)
+            print("\nProcesso completato! Eventi aggiunti a Google Calendar.")
+        except Exception as e:
+            print(f"Errore critico durante l'esecuzione: {str(e)}")
         finally:
-            time.sleep(2)
             self.driver.quit()
+
+if __name__ == '__main__':
+    GCalendarManager().run()
