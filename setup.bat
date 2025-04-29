@@ -1,5 +1,5 @@
 winget install 9PNRBTZXMB4Z
-py -m ensurepip --default-pip
-py -m pip install --upgrade pip setuptools wheel
+python -m ensurepip --default-pip
+python -m pip install --upgrade pip setuptools wheel
 pip install -r req.txt
 pause
