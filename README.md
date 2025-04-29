@@ -12,4 +12,4 @@ Strumento per organizzare automaticamente o manualmente gli esami universitari, 
 ## Requisiti
 - Python 3.10+
 - Chrome/Chromium e [ChromeDriver](https://chromedriver.chromium.org/) (compatibile con la tua versione di Chrome).
-pip install -r req.txt
+- pip install -r req.txt
