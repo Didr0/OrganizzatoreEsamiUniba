@@ -9,7 +9,7 @@ Strumento per organizzare automaticamente o manualmente gli esami universitari, 
   - Modalità **manuale**: Selezione interattiva degli esami e delle date preferite.
 - **Sincronizzazione calendario**: Aggiunta automatica degli esami selezionati a Google Calendar con promemoria personalizzati.
 
-## Requisiti (esegui setup.bat e dovresti avere i requisiti già pronti)
+## Requisiti (esegui setup.bat e dovresti avere i requisiti relativi a python già pronti)
 - Python 3.10+
 - Chrome/Chromium e [ChromeDriver](https://chromedriver.chromium.org/) (compatibile con la tua versione di Chrome).
 - pip install -r req.txt
